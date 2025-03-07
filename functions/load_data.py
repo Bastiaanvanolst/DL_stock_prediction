@@ -1,9 +1,9 @@
-import yfinance as yf
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import os
 import requests
 import pandas as pd
+import yfinance as yf
 
 
 class LoadData:
@@ -15,23 +15,36 @@ class LoadData:
             stock_symbol (str): The stock ticker symbol (e.g., 'AAPL').
         """
         self.stock_symbol = stock_symbol
-        self.start_date = (datetime.now() - timedelta(weeks=4)).strftime("%Y-%m-%d")
-        self.api_key = self.load_api_key()
+        self.start_date = (datetime.now() - timedelta(weeks=12)).strftime("%Y-%m-%d")
+        self.api_keys = self.load_api_keys()
         ticker = yf.Ticker(self.stock_symbol)
         self.name = ticker.info["displayName"]
 
-    def load_api_key(self):
+    def load_api_keys(self):
         """
-        Loads the API key from the .env file.
+        Loads API keys from the .env file.
 
         Returns:
-            str: The API key.
+            tuple: API keys for NewsAPI and APITube.
+        Raises:
+            ValueError: If any of the required API keys are not found.
         """
-        load_dotenv()  # Load environment variables from .env
-        api_key = os.getenv("API_KEY")
-        if not api_key:
-            raise ValueError("API Key not found. Check your .env file.")
-        return api_key
+        load_dotenv()
+
+        api_key_news = os.getenv("API_KEY_NEWSAPI")
+        api_key_apitube = os.getenv("API_KEY_APITUBE")
+
+        if not api_key_news or not api_key_apitube:
+            missing_keys = []
+            if not api_key_news:
+                missing_keys.append("NewsAPI")
+            if not api_key_apitube:
+                missing_keys.append("APITube")
+            raise ValueError(
+                f"API Key(s) not found for: {', '.join(missing_keys)}. Check your .env file."
+            )
+
+        return api_key_news, api_key_apitube
 
     def load_stock_data(self):
         """
@@ -53,7 +66,7 @@ class LoadData:
         return stock_data
 
     def load_news_data(self):
-        API_KEY = self.load_api_key()  # Get from https://newsapi.org/
+        API_KEY = self.api_keys[0]  # Get from https://newsapi.org/
         current_date = datetime.now()
         date = datetime.strptime(self.start_date, "%Y-%m-%d")
         all_articles = []
@@ -62,7 +75,7 @@ class LoadData:
             date_str = date.strftime("%Y-%m-%d")
             print(date_str)
             url = f"https://newsapi.org/v2/everything?q={self.name}&from={date_str}&to={date_str}&sortBy=popularity&apiKey={API_KEY}"
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
             news_data = response.json()
             date += timedelta(days=1)
             if "articles" in news_data:
@@ -74,7 +87,24 @@ class LoadData:
                 break
 
         headlines = [
-            (article["title"], article["publishedAt"]) for article in all_articles
+            (article["title"], article["publishedAt"], article["description"])
+            for article in all_articles
         ]
-        news_df = pd.DataFrame(headlines, columns=["headline", "date"])
+        news_df = pd.DataFrame(headlines, columns=["headline", "date", "description"])
         return news_df
+
+    def load_apitube_data(self):
+        API_KEY = self.api_keys[1]
+        url = "https://api.apitube.io/v1/news/top-headlines"
+
+        querystring = {
+            "title": "Apple",
+            "api_key": API_KEY,
+            "per_page": 500,
+            "published_at.start": "2022-01-01",
+            "published_at.end": "NOW",
+            "is_duplicate": "true",
+            "sort_by": "published_at",
+        }
+        response = requests.request("GET", url, params=querystring)
+        return response.json()
