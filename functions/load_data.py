@@ -7,82 +7,96 @@ import yfinance as yf
 
 
 class LoadData:
-    def __init__(self, stock_symbol):
+    """
+    A class to load financial and news data for a given stock symbol.
+
+    This includes:
+    - Historical stock data using Yahoo Finance.
+    - News articles from NewsAPI and APITube.
+    """
+
+    def __init__(self, stock_symbol: str):
         """
-        Initializes the LoadData class with a stock symbol.
+        Initializes the LoadData class with a stock ticker symbol.
 
         Args:
             stock_symbol (str): The stock ticker symbol (e.g., 'AAPL').
         """
         self.stock_symbol = stock_symbol
         self.start_date = (datetime.now() - timedelta(weeks=12)).strftime("%Y-%m-%d")
-        self.api_keys = self.load_api_keys()
-        ticker = yf.Ticker(self.stock_symbol)
-        self.name = ticker.info["displayName"]
+        self.api_keys = self._load_api_keys()
+        ticker = yf.Ticker(stock_symbol)
+        self.name = ticker.info.get("displayName", stock_symbol)
 
-    def load_api_keys(self):
+    def _load_api_keys(self) -> tuple[str, str]:
         """
-        Loads API keys from the .env file.
+        Loads NewsAPI and APITube API keys from a .env file.
 
         Returns:
-            tuple: API keys for NewsAPI and APITube.
+            tuple: (news_api_key, apitube_api_key)
+
         Raises:
-            ValueError: If any of the required API keys are not found.
+            ValueError: If any API key is missing from the environment.
         """
         load_dotenv()
-
         api_key_news = os.getenv("API_KEY_NEWSAPI")
         api_key_apitube = os.getenv("API_KEY_APITUBE")
 
-        if not api_key_news or not api_key_apitube:
-            missing_keys = []
-            if not api_key_news:
-                missing_keys.append("NewsAPI")
-            if not api_key_apitube:
-                missing_keys.append("APITube")
+        missing = []
+        if not api_key_news:
+            missing.append("NewsAPI")
+        if not api_key_apitube:
+            missing.append("APITube")
+
+        if missing:
             raise ValueError(
-                f"API Key(s) not found for: {', '.join(missing_keys)}. Check your .env file."
+                f"Missing API key(s): {', '.join(missing)}. Check your .env file."
             )
 
         return api_key_news, api_key_apitube
 
-    def load_stock_data(self):
+    def load_stock_data(self) -> pd.DataFrame | None:
         """
-        Downloads historical stock data for the initialized stock symbol.
+        Downloads historical stock data using yfinance.
 
         Returns:
-            pandas.DataFrame: DataFrame with Open, High, Low, Close, and Volume.
+            pd.DataFrame: DataFrame with Open, High, Low, Close, and Volume columns.
+            None: If no data is found.
         """
         stock_data = yf.download(self.stock_symbol, start=self.start_date)
 
         if stock_data.empty:
-            print(
-                f"No data found for {self.stock_symbol}. Check the symbol or date range."
-            )
+            print(f"No data found for '{self.stock_symbol}'.")
             return None
 
-        stock_data = stock_data[["Open", "High", "Low", "Close", "Volume"]]
-        stock_data.columns = [col[0] for col in stock_data.columns]
-        return stock_data
+        return stock_data[["Open", "High", "Low", "Close", "Volume"]]
 
-    def load_news_data(self):
-        API_KEY = self.api_keys[0]  # Get from https://newsapi.org/
-        current_date = datetime.now()
-        date = datetime.strptime(self.start_date, "%Y-%m-%d")
+    def load_news_data(self) -> pd.DataFrame:
+        """
+        Fetches recent news articles using NewsAPI, day-by-day from start_date.
+
+        Returns:
+            pd.DataFrame: DataFrame containing article headline, publication date, and description.
+        """
+        api_key = self.api_keys[0]
         all_articles = []
+        date = datetime.strptime(self.start_date, "%Y-%m-%d")
+        today = datetime.now()
 
-        while date <= current_date:
+        while date <= today:
             date_str = date.strftime("%Y-%m-%d")
-            print(date_str)
-            url = f"https://newsapi.org/v2/everything?q={self.name}&from={date_str}&to={date_str}&sortBy=popularity&apiKey={API_KEY}"
+            url = (
+                f"https://newsapi.org/v2/everything?q={self.name}"
+                f"&from={date_str}&to={date_str}&sortBy=popularity&apiKey={api_key}"
+            )
             response = requests.get(url, timeout=10)
-            news_data = response.json()
+            data = response.json()
             date += timedelta(days=1)
-            if "articles" in news_data:
-                articles = news_data["articles"]
-                if not articles:
-                    break
-                all_articles.extend(articles)
+
+            if "articles" in data:
+                if not data["articles"]:
+                    continue
+                all_articles.extend(data["articles"])
             else:
                 break
 
@@ -90,21 +104,42 @@ class LoadData:
             (article["title"], article["publishedAt"], article["description"])
             for article in all_articles
         ]
-        news_df = pd.DataFrame(headlines, columns=["headline", "date", "description"])
-        return news_df
+        return pd.DataFrame(headlines, columns=["headline", "date", "description"])
 
-    def load_apitube_data(self):
-        API_KEY = self.api_keys[1]
+    def load_apitube_data(self) -> pd.DataFrame:
+        """
+        Fetches news articles related to the stock using the APITube API.
+
+        Returns:
+            pd.DataFrame: DataFrame containing article headline, publication date, and description.
+        """
+        api_key = self.api_keys[1]
         url = "https://api.apitube.io/v1/news/top-headlines"
-
-        querystring = {
-            "title": "Apple",
-            "api_key": API_KEY,
+        query_params = {
+            "title": self.name,
+            "api_key": api_key,
             "per_page": 500,
             "published_at.start": "2022-01-01",
             "published_at.end": "NOW",
             "is_duplicate": "true",
             "sort_by": "published_at",
         }
-        response = requests.request("GET", url, params=querystring)
-        return response.json()
+
+        response = requests.get(url, params=query_params, timeout=10)
+        data = response.json()
+
+        if "results" not in data:
+            print("No results found in APITube response.")
+            return pd.DataFrame()
+
+        records = [
+            {
+                "date": item["published_at"],
+                "headline": item["title"],
+                "description": item["description"],
+            }
+            for item in data["results"]
+        ]
+
+        df = pd.DataFrame(records).drop_duplicates(subset=["headline"])
+        return df
