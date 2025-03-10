@@ -1,3 +1,2 @@
 from functions.load_data import LoadData
-
-__all__ = ["LoadData"]
+from functions.sentiment import Sentiment
