@@ -55,15 +55,25 @@ class LoadData:
 
         return api_key_news, api_key_apitube
 
-    def load_stock_data(self) -> pd.DataFrame | None:
+    def load_stock_data(
+        self, start_date: datetime | None = None
+    ) -> pd.DataFrame | None:
         """
         Downloads historical stock data using yfinance.
 
+        Args:
+            start_date (datetime | None): Optional start date. If not provided, defaults to
+                12 weeks ago from today.
+
         Returns:
-            pd.DataFrame: DataFrame with Open, High, Low, Close, and Volume columns.
-            None: If no data is found.
+            pd.DataFrame | None: DataFrame with Open, High, Low, Close, and Volume columns,
+                or None if no data is found.
         """
-        stock_data = yf.download(self.stock_symbol, start=self.start_date)
+        start_date_str = (
+            start_date.strftime("%Y-%m-%d") if start_date else self.start_date
+        )
+
+        stock_data = yf.download(self.stock_symbol, start=start_date_str)
 
         if stock_data.empty:
             print(f"No data found for '{self.stock_symbol}'.")
